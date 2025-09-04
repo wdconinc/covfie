@@ -63,20 +63,18 @@ void parse_opts(
 
 using field_t = covfie::field<covfie::backend::affine<
     covfie::backend::nearest_neighbour<covfie::backend::strided<
-        covfie::vector::size3,
-        covfie::backend::array<covfie::vector::float3>>>>>;
+        covfie::vector::size2,
+        covfie::backend::array<covfie::vector::float2>>>>>;
 
 field_t read_bfield(const std::string & fn, const float scale_factor)
 {
     std::ifstream f;
 
-    float minx = std::numeric_limits<float>::max();
-    float maxx = std::numeric_limits<float>::lowest();
-    float miny = std::numeric_limits<float>::max();
-    float maxy = std::numeric_limits<float>::lowest();
+    float minr = std::numeric_limits<float>::max();
+    float maxr = std::numeric_limits<float>::lowest();
     float minz = std::numeric_limits<float>::max();
     float maxz = std::numeric_limits<float>::lowest();
-    double spacing_x = 0.0, spacing_y = 0.0, spacing_z = 0.0;
+    double spacing_r = 0.0, spacing_z = 0.0;
 
     {
         BOOST_LOG_TRIVIAL(info)
@@ -92,41 +90,30 @@ field_t read_bfield(const std::string & fn, const float scale_factor)
 
         std::string line;
 
-        BOOST_LOG_TRIVIAL(info) << "Skipping the first four lines (comments)";
-
-        for (std::size_t i = 0; i < 4; ++i) {
-            std::getline(f, line);
-        }
-
-        float xp, yp, zp;
-        float Bx, By, Bz;
+        float rp, zp;
+        float Br, Bz;
 
         std::size_t n_lines = 0;
 
         BOOST_LOG_TRIVIAL(info)
             << "Iterating over lines in the magnetic field file";
 
-        bool x_updated = false, y_updated = false, z_updated = false;
+        bool r_updated = false, z_updated = false;
 
         /*
          * Read every line, and update our current minima and maxima
          * appropriately.
          */
-        while (f >> xp >> yp >> zp >> Bx >> By >> Bz) {
+        while (f >> rp >> zp >> Br >> Bz) {
             if (n_lines == 0) {
                 // Initialize sample spacing with the first coordinate values
-                spacing_x = xp;
-                spacing_y = yp;
+                spacing_r = rp;
                 spacing_z = zp;
             } else {
                 // Update sample spacing per coordinate once when they change
-                if (!x_updated && xp != spacing_x) {
-                    spacing_x = std::abs(xp - spacing_x);
-                    x_updated = true;
-                }
-                if (!y_updated && yp != spacing_y) {
-                    spacing_y = std::abs(yp - spacing_y);
-                    y_updated = true;
+                if (!r_updated && rp != spacing_r) {
+                    spacing_r = std::abs(rp - spacing_r);
+                    r_updated = true;
                 }
                 if (!z_updated && zp != spacing_z) {
                     spacing_z = std::abs(zp - spacing_z);
@@ -134,11 +121,8 @@ field_t read_bfield(const std::string & fn, const float scale_factor)
                 }
             }
 
-            minx = std::min(minx, xp);
-            maxx = std::max(maxx, xp);
-
-            miny = std::min(miny, yp);
-            maxy = std::max(maxy, yp);
+            minr = std::min(minr, rp);
+            maxr = std::max(maxr, rp);
 
             minz = std::min(minz, zp);
             maxz = std::max(maxz, zp);
@@ -155,18 +139,15 @@ field_t read_bfield(const std::string & fn, const float scale_factor)
     }
 
     BOOST_LOG_TRIVIAL(info)
-        << "Field dimensions in x = [" << minx << ", " << maxx << "]";
-    BOOST_LOG_TRIVIAL(info)
-        << "Field dimensions in y = [" << miny << ", " << maxy << "]";
+        << "Field dimensions in r = [" << minr << ", " << maxr << "]";
     BOOST_LOG_TRIVIAL(info)
         << "Field dimensions in z = [" << minz << ", " << maxz << "]";
 
     BOOST_LOG_TRIVIAL(info) << "Computed sample spacing:";
-    BOOST_LOG_TRIVIAL(info) << "  x-spacing: " << spacing_x;
-    BOOST_LOG_TRIVIAL(info) << "  y-spacing: " << spacing_y;
+    BOOST_LOG_TRIVIAL(info) << "  r-spacing: " << spacing_r;
     BOOST_LOG_TRIVIAL(info) << "  z-spacing: " << spacing_z;
 
-    if (spacing_x == 0.0 || spacing_y == 0.0 || spacing_z == 0.0) {
+    if (spacing_r == 0.0 || spacing_z == 0.0) {
         BOOST_LOG_TRIVIAL(fatal)
             << "Sample spacing is 0 in one dimension! Error in calculating the "
                "sample spacing from file";
@@ -177,30 +158,27 @@ field_t read_bfield(const std::string & fn, const float scale_factor)
      * Now that we have the limits of our field, compute the size in each
      * dimension.
      */
-    std::size_t sx =
-        static_cast<std::size_t>(std::lround((maxx - minx) / spacing_x)) + 1;
-    std::size_t sy =
-        static_cast<std::size_t>(std::lround((maxy - miny) / spacing_y)) + 1;
+    std::size_t sr =
+        static_cast<std::size_t>(std::lround((maxr - minr) / spacing_r)) + 1;
     std::size_t sz =
         static_cast<std::size_t>(std::lround((maxz - minz) / spacing_z)) + 1;
 
     BOOST_LOG_TRIVIAL(info)
-        << "Magnetic field size is " << sx << "x" << sy << "x" << sz;
+        << "Magnetic field size is " << sr << "x" << sz;
 
     BOOST_LOG_TRIVIAL(info) << "Constructing matching vector field...";
 
-    covfie::algebra::affine<3> translation =
-        covfie::algebra::affine<3>::translation(-minx, -miny, -minz);
-    covfie::algebra::affine<3> scaling = covfie::algebra::affine<3>::scaling(
-        static_cast<float>(sx - 1) / (maxx - minx),
-        static_cast<float>(sy - 1) / (maxy - miny),
+    covfie::algebra::affine<2> translation =
+        covfie::algebra::affine<2>::translation(0.0f, -minz);
+    covfie::algebra::affine<2> scaling = covfie::algebra::affine<2>::scaling(
+        static_cast<float>(sr - 1) / (maxr - minr),
         static_cast<float>(sz - 1) / (maxz - minz)
     );
 
     field_t field(covfie::make_parameter_pack(
         field_t::backend_t::configuration_t(scaling * translation),
         field_t::backend_t::backend_t::configuration_t{},
-        field_t::backend_t::backend_t::backend_t::configuration_t{sx, sy, sz}
+        field_t::backend_t::backend_t::backend_t::configuration_t{sr, sz}
     ));
     field_t::view_t fv(field);
 
@@ -217,14 +195,8 @@ field_t read_bfield(const std::string & fn, const float scale_factor)
 
         std::string line;
 
-        BOOST_LOG_TRIVIAL(info) << "Skipping the first four lines (comments)";
-
-        for (std::size_t i = 0; i < 4; ++i) {
-            std::getline(f, line);
-        }
-
-        float xp, yp, zp;
-        float Bx, By, Bz;
+        float rp, zp;
+        float Br, Bz;
 
         std::size_t n_lines = 0;
 
@@ -235,12 +207,11 @@ field_t read_bfield(const std::string & fn, const float scale_factor)
          * Read every line, and update our current minima and maxima
          * appropriately.
          */
-        while (f >> xp >> yp >> zp >> Bx >> By >> Bz) {
-            field_t::view_t::output_t & p = fv.at(xp, yp, zp);
+        while (f >> rp >> zp >> Br >> Bz) {
+            field_t::view_t::output_t & p = fv.at(rp, zp);
 
-            p[0] = Bx * scale_factor;
-            p[1] = By * scale_factor;
-            p[2] = Bz * scale_factor;
+            p[0] = Br * scale_factor;
+            p[1] = Bz * scale_factor;
 
             ++n_lines;
         }
